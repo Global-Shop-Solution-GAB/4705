@@ -1,0 +1,360 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("Set Hold")
+Gui.Form..Size(5940,2550)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form..Event(UnLoad,Form_UnLoad)
+Gui.Form.chkBlockSOLine.Create(CheckBox)
+Gui.Form.chkBlockSOLine.Size(3300,360)
+Gui.Form.chkBlockSOLine.Position(435,195)
+Gui.Form.chkBlockSOLine.Caption("Sales Hold")
+Gui.Form.chkBlockSOLine.Event(Click,chkBlockSOLine_Click)
+Gui.Form.chkBlockAllLine.Create(CheckBox)
+Gui.Form.chkBlockAllLine.Size(3435,360)
+Gui.Form.chkBlockAllLine.Position(435,810)
+Gui.Form.chkBlockAllLine.Caption("Eng Hold")
+Gui.Form.chkBlockAllLine.Event(Click,chkBlockAllLine_Click)
+Gui.Form.cmdOK.Create(Button)
+Gui.Form.cmdOK.Size(855,375)
+Gui.Form.cmdOK.Position(435,1425)
+Gui.Form.cmdOK.Caption("OK")
+Gui.Form.cmdOK.Event(Click,cmdOK_Click)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+v.Global..BulkDeclareBoolean(bChange)
+v.Global..BulkDeclareString(sOrder_No, sPart, sRecord_No, sLocation)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'BN, Oct 3 2017
+'In Order Entry master/Lines Script 1 button will allow setting the hold for:
+'That particular line of the Sales Order for that Part number
+'Those all SO lines for that Part number
+
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+v.Local..BulkDeclareString(sError, sSQL, sRet, sRetAllLine, sRetOneLine, sPartSOLine, sPartSO, sFilterPartSOLine, sFilterPartSO)
+v.Local..BulkDeclareString(sRows,sOneRow,sRowCells)
+v.Local..BulkDeclareLong(iRowCount,iCnt)
+
+
+'Order Entry > File > Sales Orders > Open/New
+F.ODBC.Connection!conx.OpenConnection(V.Ambient.PDSN, V.Ambient.PUser, V.Ambient.PPass)
+'Allocate btn: 000046
+'Gen-WO btn: 000061
+'Ship Sched: 000001
+
+'Populate hook 12010
+f.Intrinsic.Control.If(v.Caller.Hook,=,12010)
+	v.Passed.000162.Set("Set Hold")
+f.Intrinsic.Control.EndIf
+
+'Load Part hook or Line change hook
+f.Intrinsic.Control.If(v.Caller.Hook,=,12045,or,v.Caller.Hook,=,12705)
+	'Get Part, Location
+	f.Intrinsic.String.GSSPartString(v.passed.000052,v.passed.000053,v.Global.sPart)
+	f.Intrinsic.String.LPad(v.passed.000060,"0",7,v.Global.sOrder_No)
+	f.Intrinsic.String.LPad(v.passed.000051,"0",3,v.Global.sRecord_No)
+	'f.Intrinsic.String.Concat(v.Global.sRecord_No,"0",v.Global.sRecord_No)	
+	f.Intrinsic.String.GSSPartString(v.passed.000052,v.passed.000053,v.Global.sPart)
+	v.Global.sLocation.Set(v.passed.000054)
+	
+	'Check in All Lines blocked
+	f.Intrinsic.String.Build("Select * from GCG_4705_All_SO where Order_No = '{0}' and Part = '{1}' and Location = '{2}'",v.Global.sOrder_No,v.Global.sPart.Trim,v.Global.sLocation,v.Local.sSQL)
+	f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRetAllLine)
+	f.Intrinsic.Control.If(v.Local.sRetAllLine,<>,"")
+		F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000046,"LOCK",1)
+		F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000061,"LOCK",1)
+		F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000001,"LOCK",1)
+	f.Intrinsic.Control.EndIf	
+	
+	'Check in Single Lines blocked
+	f.Intrinsic.String.Build("Select * from GCG_4705_Unique_Line where Order_No = '{0}' and Record_No = '{1}' and Part = '{2}' and Location = '{3}'",v.Global.sOrder_No.Trim,v.Global.sRecord_No.Trim,v.Global.sPart.Trim,v.Global.sLocation,v.Local.sSQL)
+	f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRetOneLine)
+	f.Intrinsic.Control.If(v.Local.sRetOneLine,<>,"")
+		F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000046,"LOCK",1)
+		F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000061,"LOCK",1)
+		F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000001,"LOCK",1)
+	f.Intrinsic.Control.EndIf
+	
+	'If both All Lines blocked and Single Lines blocked are not found, do not block the 3 button Allocate, Gen-WO, Ship Sched
+	f.Intrinsic.Control.If(v.Local.sRetAllLine,=,"",and,v.Local.sRetOneLine,=,"")
+		F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000046,"LOCK",0)
+		F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000061,"LOCK",0)
+		F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000001,"LOCK",0)
+	f.Intrinsic.Control.EndIf
+	
+f.Intrinsic.Control.EndIf
+
+'Scrip 1 button hook to Set Hold: 12410
+f.Intrinsic.Control.If(v.Caller.Hook,=,12410)
+	'v.passed.000060 : Order_No (ex: 599)
+	'v.passed.000051 : Line (ex: 1)
+	'v.passed.000052 : Part 17 characters
+	'v.passed.000053 : Rev
+	'v.passed.000054 : Location
+	f.Intrinsic.String.LPad(v.passed.000060,"0",7,v.Global.sOrder_No)
+	f.Intrinsic.String.LPad(v.passed.000051,"0",3,v.Global.sRecord_No)
+	'f.Intrinsic.String.Concat(v.Global.sRecord_No,"0",v.Global.sRecord_No) 
+	f.Intrinsic.Control.If(v.passed.000052.Trim,=,"")
+		f.Intrinsic.UI.Msgbox("Please input a part number","Empty part")
+		f.Intrinsic.Control.ExitSub
+	f.Intrinsic.Control.EndIf
+	
+	'Get Part and Location
+	f.Intrinsic.String.GSSPartString(v.passed.000052,v.passed.000053,v.Global.sPart)
+	v.Global.sLocation.Set(v.passed.000054)	
+	
+	'Check in All Lines blocked
+	f.Intrinsic.String.Build("Select * from GCG_4705_All_SO where Order_No = '{0}' and Part = '{1}' and Location = '{2}'",v.Global.sOrder_No.Trim,v.Global.sPart.Trim,v.Global.sLocation,v.Local.sSQL)
+	f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+	f.Intrinsic.Control.If(v.Local.sRet,<>,"")
+		gui.Form.chkBlockAllLine.Value(1)
+	f.Intrinsic.Control.Else
+		gui.Form.chkBlockAllLine.Value(0)
+	f.Intrinsic.Control.EndIf
+	
+	'Check in Single Lines blocked
+	f.Intrinsic.String.Build("Select * from GCG_4705_Unique_Line where Order_No = '{0}' and Record_No = '{1}' and Part = '{2}' and Location = '{3}'",v.Global.sOrder_No.Trim,v.Global.sRecord_No.Trim,v.Global.sPart.Trim,v.Global.sLocation,v.Local.sSQL)
+	f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+	f.Intrinsic.Control.If(v.Local.sRet,<>,"")
+		gui.Form.chkBlockSOLine.Value(1)
+	f.Intrinsic.Control.Else
+		gui.Form.chkBlockSOLine.Value(0)
+	f.Intrinsic.Control.EndIf
+
+	gui.Form..Show
+	v.Global.bChange.Set(False)
+	
+f.Intrinsic.Control.EndIf
+
+
+'Shop Floor Control > File > Automated Work Order Generation: will not populate Sales Order Lines that are blocked from Order Entry/Lines master
+f.Intrinsic.Control.If(v.Caller.Hook,=,28600)
+	
+	'Pull blocked SO Lines
+	f.Data.DataTable.CreateFromSQL("UniqueLine","conx","select Part + '|~|' + Order_No + '|~|' + left(Record_No,3) as PartSOLine  from GCG_4705_Unique_Line",True)
+	F.Data.DataView.Create("UniqueLine","UniqueLine_DTV",22,"","")	
+	f.Data.DataTable.CreateFromSQL("AllSO","conx","select Part + '|~|' + Order_No as PartSO from GCG_4705_All_SO",True)
+	F.Data.DataView.Create("AllSO","AllSO_DTV",22,"","")
+	
+	'Load BDF, scan and upload new BDF
+	F.Intrinsic.BDF.Load("AUX001","AUX001")
+	F.Intrinsic.BDF.Clone("AUX001","Clone")
+	F.Intrinsic.BDF.ReadRowCount("AUX001", v.Local.iRowCount)
+	f.Intrinsic.Math.Sub(v.Local.iRowCount,1,v.Local.iRowCount)
+	
+	f.Intrinsic.Control.For(v.Local.iCnt,0,v.Local.iRowCount,1)
+	
+		F.Intrinsic.BDF.ReadRow("AUX001", v.Local.iCnt, v.Local.sOneRow)
+		f.Intrinsic.String.Split(v.Local.sOneRow,"|~|",v.Local.sRowCells)
+		'Part (1), SO (8), Line (9)
+		f.Intrinsic.String.Build("{0}|~|{1}|~|{2}",v.Local.sRowCells(1).left20,v.Local.sRowCells(8),v.Local.sRowCells(9),v.Local.sPartSOLine)
+		f.Intrinsic.String.Build("{0}|~|{1}",v.Local.sRowCells(1).left20,v.Local.sRowCells(8),v.Local.sPartSO)
+		
+		f.Intrinsic.String.Build("PartSOLine = '{0}'",v.Local.sPartSOLine,v.Local.sFilterPartSOLine)
+		f.Intrinsic.String.Build("PartSO = '{0}'",v.Local.sPartSO,v.Local.sFilterPartSO)
+		
+		F.Data.DataView.SetFilter("UniqueLine","UniqueLine_DTV",v.Local.sFilterPartSOLine)
+		F.Data.DataView.SetFilter("AllSO","AllSO_DTV",v.Local.sFilterPartSO)
+		
+		'Add rows if it is not in the blocked SO lines		
+		f.Intrinsic.Control.If(V.DataView.UniqueLine!UniqueLine_DTV.RowCount,=,0)
+			f.Intrinsic.Control.If(V.DataView.AllSO!AllSO_DTV.RowCount,=,0)				
+				Function.Intrinsic.BDF.WriteRow("Clone",v.Local.sOneRow)
+			f.Intrinsic.Control.EndIf
+		f.Intrinsic.Control.EndIf	
+	
+	f.Intrinsic.Control.Next(v.Local.iCnt)	
+	
+	F.Intrinsic.BDF.Save("Clone","AUX001")
+	
+f.Intrinsic.Control.EndIf
+
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4705_SO_Engineer_Hold.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Main.End
+
+Program.Sub.Form_UnLoad.Start
+F.Intrinsic.Control.SetErrorHandler("Form_UnLoad_Err")
+F.Intrinsic.Control.ClearErrors
+v.Local..BulkDeclareString(sError)
+v.Local..BulkDeclareLong(iFlag)
+
+f.Intrinsic.Control.If(v.Global.bChange,=,True)
+	Function.Intrinsic.UI.MsgBox ("Do you want to save changes?", "Set Hold", 3,v.Local.iFlag)
+	f.Intrinsic.Control.If(v.Local.iFlag,=,6)
+		f.Intrinsic.Control.CallSub(set_hold)		
+	f.Intrinsic.Control.EndIf	
+f.Intrinsic.Control.EndIf
+
+f.ODBC.Connection!conx.Close
+f.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Form_UnLoad_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4705_SO_Engineer_Hold.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Form_UnLoad.End
+
+Program.Sub.cmdOK_Click.Start
+F.Intrinsic.Control.SetErrorHandler("cmdOK_Click_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+f.Intrinsic.Control.CallSub(set_hold)
+f.ODBC.Connection!conx.Close
+f.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("cmdOK_Click_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4705_SO_Engineer_Hold.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.cmdOK_Click.End
+
+Program.Sub.Set_Hold.Start
+F.Intrinsic.Control.SetErrorHandler("Setting_Hold_Err")
+F.Intrinsic.Control.ClearErrors
+v.Local..BulkDeclareString(sError, sSQL, sRet)
+v.Local..BulkDeclareLong(iFlag)
+
+'Changes in this subroutine by FEQ 11/11/2018. The customer would like to record the user and date that changes were made, if any
+
+'Checkbox All SO line is checked
+f.Intrinsic.Control.If(v.Screen.Form!chkBlockAllLine.Value,=,1)
+	F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000046,"LOCK",1)
+	F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000061,"LOCK",1)
+	F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000001,"LOCK",1)
+
+	f.Intrinsic.String.Build("Select * from GCG_4705_All_SO where Order_No = '{0}' and Part = '{1}' and Location = '{2}'",v.Global.sOrder_No,v.Global.sPart.Trim,v.Global.sLocation,v.Local.sSQL)
+'	f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstAll", V.Local.sSql)
+	f.Intrinsic.Control.If(V.ODBC.conx!rstAll.EOF,=,True)
+		F.ODBC.conx!rstAll.AddNew
+		F.ODBC.conx!rstAll.Set!Order_No(V.Global.sOrder_No.Trim)
+		F.ODBC.conx!rstAll.Set!Part(V.Global.sPart.Trim)
+		F.ODBC.conx!rstAll.Set!Location(V.Global.sLocation)
+'		f.Intrinsic.String.Build("Insert into GCG_4705_All_SO (Order_No, Part, Location) values ('{0}','{1}','{2}')",v.Global.sOrder_No,v.Global.sPart,v.Global.sLocation,v.Local.sSQL)
+'		f.ODBC.Connection!conx.Execute(v.Local.sSQL)
+	f.Intrinsic.Control.EndIf
+	F.ODBC.conx!rstAll.Set!UserName(V.Caller.User)
+	F.ODBC.conx!rstAll.Set!ChangeDate(V.Ambient.Date)
+	F.ODBC.conx!rstAll.Update
+	
+	F.ODBC.conx!rstAll.Close
+f.Intrinsic.Control.Else	
+	f.Intrinsic.String.Build("Delete from GCG_4705_All_SO where Order_No = '{0}' and Part = '{1}' and Location = '{2}'",v.Global.sOrder_No,v.Global.sPart.Trim,v.Global.sLocation,v.Local.sSQL)
+	f.ODBC.Connection!conx.Execute(v.Local.sSQL)	
+f.Intrinsic.Control.EndIf		
+
+'Checkbox SO line is checked
+f.Intrinsic.Control.If(v.Screen.Form!chkBlockSOLine.Value,=,1)
+	F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000046,"LOCK",1)
+	F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000061,"LOCK",1)
+	F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000001,"LOCK",1)
+	f.Intrinsic.String.Build("Select * from GCG_4705_Unique_Line where Order_No = '{0}' and Record_No = '{1}' and Part = '{2}' and Location = '{3}'",v.Global.sOrder_No,v.Global.sRecord_No,v.Global.sPart.Trim,v.Global.sLocation,v.Local.sSQL)
+'	f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstUnique", V.Local.sSql)
+	f.Intrinsic.Control.If(V.ODBC.conx!rstUnique.EOF,=,True)
+		F.ODBC.conx!rstUnique.AddNew
+		F.ODBC.conx!rstUnique.Set!Order_No(V.Global.sOrder_No.Trim)
+		F.ODBC.conx!rstUnique.Set!Record_No(v.Global.sRecord_No)
+		F.ODBC.conx!rstUnique.Set!Part(V.Global.sPart.Trim)
+		F.ODBC.conx!rstUnique.Set!Location(V.Global.sLocation)
+'		f.Intrinsic.String.Build("Insert into GCG_4705_Unique_Line (Order_No, Record_No, Part, Location) values ('{0}','{1}','{2}','{3}')",v.Global.sOrder_No,v.Global.sRecord_No,v.Global.sPart,v.Global.sLocation,v.Local.sSQL)
+'		f.ODBC.Connection!conx.Execute(v.Local.sSQL)
+	f.Intrinsic.Control.EndIf
+	F.ODBC.conx!rstUnique.Set!UserName(V.Caller.User)
+	F.ODBC.conx!rstUnique.Set!ChangeDate(V.Ambient.Date)
+	F.ODBC.conx!rstUnique.Update
+
+	F.ODBC.conx!rstUnique.Close
+f.Intrinsic.Control.Else
+	f.Intrinsic.String.Build("Delete from GCG_4705_Unique_Line where Order_No = '{0}' and Record_No = '{1}' and Part = '{2}' and Location = '{3}'",v.Global.sOrder_No,v.Global.sRecord_No,v.Global.sPart,v.Global.sLocation,v.Local.sSQL)
+	f.ODBC.Connection!conx.Execute(v.Local.sSQL)	
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(v.Screen.Form!chkBlockAllLine.Value,=,0,and,v.Screen.Form!chkBlockSOLine.Value,=,0)
+	F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000046,"LOCK",0)
+	F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000061,"LOCK",0)
+	F.Intrinsic.UI.ChangeCallerProperty(v.Passed.000001,"LOCK",0)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Setting_Hold_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4705_SO_Engineer_Hold.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Set_Hold.End
+
+Program.Sub.chkBlockSOLine_Click.Start
+F.Intrinsic.Control.SetErrorHandler("chkBlockSOLine_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+v.Global.bChange.Set(True)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("chkBlockSOLine_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4705_SO_Engineer_Hold.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.chkBlockSOLine_Click.End
+
+Program.Sub.chkBlockAllLine_Click.Start
+F.Intrinsic.Control.SetErrorHandler("chkBlockAllLine_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+v.Global.bChange.Set(True)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("chkBlockAllLine_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4705_SO_Engineer_Hold.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.chkBlockAllLine_Click.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$$}$9/27/2017 10:06:14 PM$}$False
+${$3$}$0$}$$}$-1$}$-1$}$$}$1/1/1900$}$This project was created for Kosmo Machine, Inc. on June of 2016.
+
+
+This is a custom GAB script that will display custom work order detail information. The information will be identical to the data from the work order detail grid in the standard GSS system however the user will not have the ability to browse via the ?Amount? column.
+The purpose of this is the customer has quoters/planners that would like to see this specific information and cannot do so with the Work Order (No Dollars) or WO Detail standard report.
+This GAB script is to run from the Work Order header screen. The script will check to see if the user is a part of the WODET security group. If they are not the ?Details? button will be disabled and the ?Script 1? button will be activated with the custom GAB script.
+Customer will need to set up the WODET security group prior to installation. Customer is responsible for setting up security for the standard work order screens if certain users are not to access it.
+
+**Note: Given the information on the custom grid, just as with the standard WO detail screen, given certain parameters pay for Labor may be calculated by users.
+Program.Sub.Comments.End
